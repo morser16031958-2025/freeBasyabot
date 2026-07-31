@@ -1,0 +1,35 @@
+# Free Bot
+
+Простой Telegram-бот для бесплатного чата с AI-моделями через **Ollama Cloud** (OpenAI-совместимый API). Без биллинга, без прокси, токены не списываются.
+
+## Возможности
+
+- Чат с бесплатными моделями: `minimax-m3`, `gpt-oss:120b`, `nemotron-3-ultra`, `gemma4:31b`
+- Выбор модели в меню
+- История диалога в памяти сессии (сбрасывается при выходе)
+- Команды: `/start /chat /stop /models /help`
+
+## Установка и запуск
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate
+pip install -r requirements.txt
+
+copy .env.example .env
+# Заполнить BOT_TOKEN (от @BotFather) и OLLAMA_API_KEY (ollama.com/settings/keys)
+
+py -m main
+```
+
+## Лимиты
+
+Ollama Cloud free-тир: лимит по GPU-времени (не по токенам), сброс каждые 5 часов и 7 дней, 1 одновременный запрос. При исчерпании квоты приходит 429 — бот показывает сообщение об этом. `kimi-k3` и `deepseek-v4-*` на Ollama Cloud платные (нужна подписка).
+
+## Тестирование
+
+```powershell
+py -m pytest test_bot.py -q
+```
+
+Модульные тесты мокают сеть и проверяют: выбор модели, лимит истории, обработку ошибок провайдера (429/недоступность), запрос в правильный URL с правильным заголовком.
