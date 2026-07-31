@@ -125,3 +125,161 @@ def test_chat_history_truncation():
     del history[: extra + extra % 2]
     assert len(history) == limit
     assert history[0]["role"] == "user"
+
+
+def test_ask_agent_loop_executes_tool(monkeypatch):
+    """Если модель просит web_search, бот выполняет тул и передаёт результат."""
+
+    class _AgentUpstream:
+        def __init__(self):
+            self.post_calls = []
+            self.web_search_calls = []
+
+        def __call__(self, *args, **kwargs):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            self.post_calls.append({"url": url, "json": json})
+            if url.endswith("/api/web_search"):
+                self.web_search_calls.append(json["query"])
+                return httpx.Response(200, json={
+                    "results": [{"title": "R", "url": "https://r", "content": "snippet"}]
+                })
+            if len(self.post_calls) == 1:
+                return httpx.Response(200, json={
+                    "choices": [{
+                        "message": {
+                            "content": None,
+                            "tool_calls": [{
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "web_search", "arguments": '{"query": "test"}'},
+                            }],
+                        }
+                    }]
+                })
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "final answer"}}]
+            })
+
+    fake = _AgentUpstream()
+    monkeypatch.setattr(provider.httpx, "AsyncClient", fake)
+
+    called_tools = []
+    async def on_tool(name, args):
+        called_tools.append((name, args))
+
+    answer = asyncio.run(provider.ask(
+        [{"role": "user", "content": "поищи"}],
+        on_tool=on_tool,
+    ))
+
+    assert answer == "final answer"
+    assert fake.web_search_calls == ["test"]
+    assert called_tools == [("web_search", {"query": "test"})]
+    chat_calls = [c for c in fake.post_calls if c["url"].endswith("/v1/chat/completions")]
+    tool_msg = chat_calls[-1]["json"]["messages"][-1]
+    assert tool_msg["role"] == "tool"
+    assert "snippet" in tool_msg["content"]
+    assert "https://r" in tool_msg["content"]
+
+
+def test_ask_agent_loop_bails_after_limit(monkeypatch):
+    """Если модель бесконечно просит тулы — выходим с внятной ошибкой."""
+
+    class _LoopUpstream:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, *args, **kwargs):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            self.calls += 1
+            return httpx.Response(200, json={
+                "choices": [{
+                    "message": {
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "web_search", "arguments": '{"query": "x"}'},
+                        }],
+                    }
+                }]
+            })
+
+    fake = _LoopUpstream()
+    monkeypatch.setattr(provider.httpx, "AsyncClient", fake)
+
+    with pytest.raises(provider.ProviderError, match="Слишком много шагов"):
+        asyncio.run(provider.ask([{"role": "user", "content": "hi"}]))
+
+
+def test_web_search_formats_results(monkeypatch):
+    class _SearchUpstream:
+        def __call__(self, *args, **kwargs):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            assert url.endswith("/api/web_search")
+            assert json["query"] == "kurs dolara"
+            return httpx.Response(200, json={
+                "results": [
+                    {"title": "A", "url": "https://a", "content": "aaa"},
+                    {"title": "B", "url": "https://b", "content": "bbb"},
+                ]
+            })
+
+    fake = _SearchUpstream()
+    monkeypatch.setattr(provider.httpx, "AsyncClient", fake)
+
+    text = asyncio.run(provider.web_search("kurs dolara", max_results=2))
+    assert "1. A" in text
+    assert "https://b" in text
+    assert "bbb" in text
+
+
+def test_web_search_empty_results(monkeypatch):
+    class _EmptyUpstream:
+        def __call__(self, *args, **kwargs):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return httpx.Response(200, json={"results": []})
+
+    fake = _EmptyUpstream()
+    monkeypatch.setattr(provider.httpx, "AsyncClient", fake)
+
+    text = asyncio.run(provider.web_search("nonsense"))
+    assert text == "Ничего не найдено."
+
+
+def test_web_search_no_key_returns_message(monkeypatch):
+    monkeypatch.setattr(config, "OLLAMA_API_KEY", "")
+    text = asyncio.run(provider.web_search("query"))
+    assert "no API key" in text

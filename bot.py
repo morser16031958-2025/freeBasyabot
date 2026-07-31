@@ -136,20 +136,38 @@ async def _chat_message(update: Update, context):
     history.append({"role": "user", "content": update.message.text})
 
     model = context.user_data.get("chat_model", config.OLLAMA_MODEL)
-    await update.effective_chat.send_action("typing")
+    status_msg = None
+
+    async def on_tool(name: str, args: dict):
+        nonlocal status_msg
+        query = args.get("query") or args.get("url") or ""
+        text = f"🔎 Ищу в интернете: <i>{html.escape(query[:100])}</i>…"
+        if status_msg is None:
+            status_msg = await update.message.reply_text(text, parse_mode="HTML")
+        else:
+            status_msg = await status_msg.edit_text(text, parse_mode="HTML")
+
     try:
-        answer = await provider.ask(history, model=model)
+        await update.effective_chat.send_action("typing")
+        answer = await provider.ask(history, model=model, on_tool=on_tool)
     except provider.ProviderError as e:
         history.pop()
+        if status_msg is not None:
+            await status_msg.delete()
         await update.message.reply_text(f"⚠️ {e}", reply_markup=_chat_kb())
         return
     except Exception:
         history.pop()
         logger.exception("Chat request failed")
+        if status_msg is not None:
+            await status_msg.delete()
         await update.message.reply_text(
             "⚠️ Не удалось получить ответ. Попробуйте ещё раз.", reply_markup=_chat_kb()
         )
         return
+
+    if status_msg is not None:
+        await status_msg.delete()
 
     history.append({"role": "assistant", "content": answer})
     if len(history) > config.CHAT_HISTORY_LIMIT:
