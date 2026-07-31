@@ -4,8 +4,10 @@
 Без биллинга и без прокси: команды /start /chat /stop /models /help.
 История диалога живёт в памяти сессии (user_data) и сбрасывается при выходе.
 """
+import asyncio
 import html
 import logging
+import signal
 
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -244,6 +246,22 @@ async def run(app: Application):
         logger.info("Bot started")
     except Exception:
         logger.exception("Bot failed to start")
+        await stop(app)
+        return
+
+    # Держим процесс живым, пока не придёт SIGINT/SIGTERM (Ctrl+C или docker stop).
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+    try:
+        await stop_event.wait()
+    except asyncio.CancelledError:
+        pass
+    await stop(app)
 
 
 async def stop(app: Application):
