@@ -1,0 +1,9 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+bot_out.log
+bot_err.log
