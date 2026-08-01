@@ -120,6 +120,39 @@ def test_bot_builds_without_token():
     assert bot.build_app() is None
 
 
+def test_text_handler_enter_chat_via_reply_keyboard():
+    """Нажатие reply-кнопки «💬 Чат» входит в чат, а не уходит модели."""
+
+    class _Msg:
+        def __init__(self, text):
+            self.text = text
+            self._reply = None
+
+        async def reply_text(self, *a, **k):
+            self._reply = (a, k)
+            return self
+
+    class _Update:
+        def __init__(self, text):
+            self.message = _Msg(text)
+            self.callback_query = None
+            self.effective_user = None
+            self.effective_chat = type("C", (), {"send_action": lambda self, a: None})
+
+    import bot
+    update = _Update("💬 Чат")
+    context = type("Ctx", (), {"user_data": {}})()
+
+    async def run():
+        await bot.text_handler(update, context)
+        return update.message._reply
+
+    reply = asyncio.run(run())
+    assert context.user_data["chat_mode"] is True
+    assert reply is not None
+    assert "Бесплатный чат" in reply[0][0]
+
+
 def test_chat_history_truncation():
     """Контекст обрезается до чётного числа реплик, начинается с user."""
     history = [{"role": "user", "content": str(i)} for i in range(30)]

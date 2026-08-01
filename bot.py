@@ -10,7 +10,13 @@ import logging
 import signal
 
 import telegram
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 import config
@@ -31,6 +37,26 @@ MODELS_HINT = (
     "Модель меняется кнопками ниже. Текущая: <code>{current}</code>"
 )
 
+HELP_TEXT = (
+    "🤖 <b>Бесплатный AI-бот</b>\n\n"
+    "💬 Чат — общение с моделью\n"
+    "🎯 Модель — выбор из бесплатных моделей\n"
+    "⏹ Выйти — закрыть чат\n\n"
+    "Команды: /start /chat /stop /models /help"
+)
+
+
+def _menu_rk():
+    """Постоянная reply-клавиатура под полем ввода."""
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("💬 Чат")],
+            [KeyboardButton("🎯 Модель"), KeyboardButton("⏹ Выйти")],
+            [KeyboardButton("❓ Помощь")],
+        ],
+        resize_keyboard=True,
+    )
+
 
 def _menu_kb():
     return InlineKeyboardMarkup([
@@ -47,7 +73,7 @@ def _chat_kb():
     ])
 
 
-async def _reply_or_edit(update: Update, text: str, kb=None):
+async def _reply_or_edit(update: Update, text: str, kb=None, rk=None):
     query = update.callback_query
     if query:
         await query.answer()
@@ -56,10 +82,11 @@ async def _reply_or_edit(update: Update, text: str, kb=None):
             kwargs["reply_markup"] = kb
         await query.edit_message_text(text, **kwargs)
     else:
-        if kb:
-            await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
-        else:
-            await update.message.reply_text(text, parse_mode="HTML")
+        await update.message.reply_text(
+            text,
+            reply_markup=rk if rk is not None else kb,
+            parse_mode="HTML",
+        )
 
 
 async def start(update: Update, context):
@@ -69,9 +96,9 @@ async def start(update: Update, context):
         f"👋 Привет, {user.first_name}!\n\n"
         "Это бесплатный бот для чата с AI-моделями.\n"
         "Токены не списываются — сервис полностью бесплатный.\n\n"
-        "Нажмите «Чат», выберите модель и общайтесь."
+        "Кнопки внизу — всегда под рукой. Нажмите «Чат» и общайтесь."
     )
-    await _reply_or_edit(update, text, _menu_kb())
+    await _reply_or_edit(update, text, rk=_menu_rk())
 
 
 async def menu_handler(update: Update, context):
@@ -103,13 +130,7 @@ async def menu_handler(update: Update, context):
 
     elif data == "menu_help":
         await query.answer()
-        text = (
-            "🤖 <b>Бесплатный AI-бот</b>\n\n"
-            "💬 Чат — общение с моделью\n"
-            "🎯 Модель — выбор из бесплатных моделей\n\n"
-            "Команды: /start /chat /stop /models /help"
-        )
-        await query.edit_message_text(text, reply_markup=_menu_kb(), parse_mode="HTML")
+        await query.edit_message_text(HELP_TEXT, reply_markup=_menu_kb(), parse_mode="HTML")
 
     elif data == "menu_back":
         await query.answer()
@@ -208,7 +229,7 @@ async def cmd_chat(update: Update, context):
 
 async def cmd_stop(update: Update, context):
     if not context.user_data.get("chat_mode"):
-        await update.message.reply_text("Чат и так выключен.", reply_markup=_menu_kb())
+        await update.message.reply_text("Чат и так выключен.", reply_markup=_menu_rk())
         return
     await _exit_chat(update, context)
 
@@ -226,16 +247,53 @@ async def cmd_models(update: Update, context):
 
 async def text_handler(update: Update, context):
     text = update.message.text.strip()
+
+    if text == "💬 Чат":
+        await _enter_chat(update, context)
+        return
+    if text == "🎯 Модель":
+        context.user_data["chat_mode"] = False
+        await _show_models_reply(update, context)
+        return
+    if text == "❓ Помощь":
+        context.user_data["chat_mode"] = False
+        await update.message.reply_text(HELP_TEXT, reply_markup=_menu_rk(), parse_mode="HTML")
+        return
+    if text == "⏹ Выйти":
+        if context.user_data.get("chat_mode"):
+            await _exit_chat(update, context)
+        else:
+            await update.message.reply_text(
+                "Чат и так выключен.", reply_markup=_menu_rk(), parse_mode="HTML"
+            )
+        return
+
     if context.user_data.get("chat_mode"):
         await _chat_message(update, context)
     else:
         await update.message.reply_text(
-            "Используйте меню или команды:\n"
+            "Используйте меню внизу или команды:\n"
             "/chat — чат с моделью\n"
             "/models — выбрать модель\n"
             "/help — справка",
-            reply_markup=_menu_kb(),
+            reply_markup=_menu_rk(),
         )
+
+
+async def _show_models_reply(update: Update, context):
+    current = context.user_data.get("chat_model", config.OLLAMA_MODEL)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"{'✅ ' if m == current else '➖ '}{m}",
+            callback_data=f"model_{m}"
+        )]
+        for m in config.OLLAMA_MODELS
+    ] + [[InlineKeyboardButton("← Назад", callback_data="menu_back")]])
+    await update.message.reply_text(
+        MODELS_HINT.format(current=html.escape(current)),
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
 
 
 def build_app() -> Application | None:
