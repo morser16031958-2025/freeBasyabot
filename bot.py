@@ -34,7 +34,9 @@ CHAT_INTRO = (
 
 MODELS_HINT = (
     "🎯 <b>Бесплатные модели</b>\n\n"
-    "Модель меняется кнопками ниже. Текущая: <code>{current}</code>"
+    "Текущая: <code>{current}</code>\n"
+    "{description}\n\n"
+    "Выберите модель кнопками ниже."
 )
 
 HELP_TEXT = (
@@ -44,6 +46,21 @@ HELP_TEXT = (
     "⏹ Выйти — закрыть чат\n\n"
     "Команды: /start /chat /stop /models /help"
 )
+
+# Короткие описания моделей — что юзер может ожидать от каждой.
+MODEL_DESCRIPTIONS = {
+    "minimax-m3": "💭 Думает перед ответом: хороша для сложных вопросов и логики. Медленнее, ответы длиннее и обстоятельнее.",
+    "gpt-oss:120b": "⚡ Быстрая и по делу, надёжнее всех ходит в интернет за свежими данными. Лучший выбор для новостей и фактов.",
+    "nemotron-3-ultra": "🧠 Сильная в рассуждениях, ответы глубокие и точные. Немного медленнее, но качество высокое.",
+    "nemotron-3-super": "⚖️ Баланс скорости и качества, универсальная для повседневных вопросов.",
+    "nemotron-3-nano:30b": "🚀 Самая лёгкая и быстрая из Nemotron, для простых вопросов и быстрых ответов.",
+    "gpt-oss:20b": "⚡ Компактная версия gpt-oss: быстро, по делу, умеет искать в интернете.",
+}
+
+
+def _models_hint(current: str) -> str:
+    desc = MODEL_DESCRIPTIONS.get(current, "Выберите модель ниже.")
+    return MODELS_HINT.format(current=html.escape(current), description=desc)
 
 
 def _menu_rk():
@@ -285,7 +302,7 @@ async def _show_models(update: Update, context):
         for m in config.OLLAMA_MODELS
     ] + [[InlineKeyboardButton("← Назад", callback_data="menu_back")]])
     await query.edit_message_text(
-        MODELS_HINT.format(current=html.escape(current)),
+        _models_hint(current),
         reply_markup=kb,
         parse_mode="HTML",
     )
@@ -293,9 +310,19 @@ async def _show_models(update: Update, context):
 
 async def model_callback(update: Update, context):
     query = update.callback_query
-    await query.answer()
     model = query.data.replace("model_", "", 1)
     context.user_data["chat_model"] = model
+    desc = MODEL_DESCRIPTIONS.get(model)
+    if desc:
+        await query.answer(f"Выбрано: {model}")
+        await query.edit_message_text(
+            f"✅ <b>{html.escape(model)}</b>\n\n{desc}\n\nЧтобы начать — нажмите «💬 Чат».",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("← К списку", callback_data="menu_models")
+            ]]),
+        )
+        return
     await _show_models(update, context)
 
 
@@ -312,8 +339,9 @@ async def cmd_stop(update: Update, context):
 
 async def cmd_models(update: Update, context):
     context.user_data["chat_mode"] = False
+    current = context.user_data.get("chat_model", config.OLLAMA_MODEL)
     await update.message.reply_text(
-        f"🎯 Выберите модель:\n\nТекущая: <code>{html.escape(context.user_data.get('chat_model', config.OLLAMA_MODEL))}</code>",
+        _models_hint(current),
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(f"{m}", callback_data=f"model_{m}")] for m in config.OLLAMA_MODELS
         ]),
@@ -366,7 +394,7 @@ async def _show_models_reply(update: Update, context):
         for m in config.OLLAMA_MODELS
     ] + [[InlineKeyboardButton("← Назад", callback_data="menu_back")]])
     await update.message.reply_text(
-        MODELS_HINT.format(current=html.escape(current)),
+        _models_hint(current),
         reply_markup=kb,
         parse_mode="HTML",
     )
