@@ -183,7 +183,11 @@ async def ask(
 
 
 async def ask_stream(history: list[dict], model: str = None):
-    """Стриминговый вызов модели. Yields chunks текста по мере генерации."""
+    """Стриминговый вызов модели с поддержкой tool calls.
+
+    Сначала проверяет non-streaming, есть ли tool calls.
+    Если есть — исполняет их, затем стримит финальный ответ.
+    """
     model = model or config.OLLAMA_MODEL
     base, api_key, chat_path = _route(model)
     if not api_key:
@@ -198,44 +202,92 @@ async def ask_stream(history: list[dict], model: str = None):
         "Authorization": f"Bearer {api_key}",
         "content-type": "application/json",
     }
-    payload = {
-        "model": model,
-        "max_tokens": config.CHAT_MAX_TOKENS,
-        "messages": messages,
-        "stream": True,
-        "tools": _TOOLS,
-    }
 
     async with httpx.AsyncClient(timeout=config.TIMEOUT) as h:
-        try:
-            async with h.stream(
-                "POST",
-                f"{base}{chat_path}",
-                headers=headers,
-                json=payload,
-            ) as resp:
-                if resp.status_code == 429:
-                    raise ProviderError("Лимит бесплатного провайдера исчерпан, попробуйте позже")
-                if resp.status_code >= 400:
-                    body = await resp.aread()
-                    raise ProviderError(f"Модель вернула ошибку {resp.status_code}")
+        for step in range(config.AGENT_MAX_ITERS + 1):
+            # Первый шаг — non-streaming, чтобы поймать tool calls
+            payload = {
+                "model": model,
+                "max_tokens": config.CHAT_MAX_TOKENS,
+                "messages": messages,
+                "stream": step > 0,  # Стримим только финальный ответ
+                "tools": _TOOLS,
+            }
 
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
+            try:
+                resp = await h.post(
+                    f"{base}{chat_path}",
+                    headers=headers,
+                    json=payload,
+                )
+            except httpx.RequestError as e:
+                raise ProviderError(f"Провайдер недоступен: {e}")
+
+            if resp.status_code == 429:
+                raise ProviderError("Лимит бесплатного провайдера исчерпан, попробуйте позже")
+            if resp.status_code >= 400:
+                raise ProviderError(f"Модель вернула ошибку {resp.status_code}")
+
+            if step == 0:
+                # Non-streaming: проверяем tool calls
+                data = resp.json()
+                try:
+                    choice = data["choices"][0]
+                    message = choice["message"]
+                except (KeyError, IndexError, TypeError):
+                    raise ProviderError("Модель вернула некорректный ответ")
+
+                tool_calls = message.get("tool_calls") or []
+                text = message.get("content") or ""
+
+                if not tool_calls:
+                    # Нет tool calls — стримим этот же ответ
+                    if not text:
+                        raise ProviderError("Модель вернула пустой ответ")
+                    # Просто разбиваем на чанки и отдаём
+                    for i in range(0, len(text), 100):
+                        yield text[i:i+100]
+                    return
+
+                # Есть tool calls — исполняем
+                messages.append({"role": "assistant", "content": text or None, "tool_calls": tool_calls})
+                for call in tool_calls:
+                    name = (call.get("function") or {}).get("name", "")
                     try:
-                        data = json.loads(data_str)
-                        delta = data["choices"][0].get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            yield content
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-        except httpx.RequestError as e:
-            raise ProviderError(f"Провайдер недоступен: {e}")
+                        args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    try:
+                        result = await _exec_tool(name, args)
+                    except Exception as e:
+                        result = f"Tool error: {e}"
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": result,
+                    })
+                continue
+
+            # step > 0: стриминговый ответ
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str.strip() == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                    delta = data["choices"][0].get("delta", {})
+                    content = delta.get("content")
+                    if content:
+                        yield content
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+            return
+
+    raise ProviderError("Слишком много шагов поиска — попробуйте переформулировать запрос")
 
 
 async def web_search(query: str, max_results: int = None) -> str:
