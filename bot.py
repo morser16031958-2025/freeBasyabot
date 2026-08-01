@@ -149,7 +149,7 @@ async def _enter_chat(update: Update, context):
 async def _exit_chat(update: Update, context):
     context.user_data["chat_mode"] = False
     context.user_data["chat_history"] = []
-    await _reply_or_edit(update, "Чат закрыт. История очищена.", _menu_kb())
+    await _reply_or_edit(update, "Чат закрыт. История очищена.", rk=_menu_rk())
 
 
 async def _chat_message(update: Update, context):
