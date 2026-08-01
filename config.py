@@ -58,3 +58,7 @@ CHAT_CHUNK_SIZE = _int("CHAT_CHUNK_SIZE", 3500)
 AGENT_MAX_ITERS = _int("AGENT_MAX_ITERS", 4)
 WEB_SEARCH_RESULTS = _int("WEB_SEARCH_RESULTS", 5)
 WEB_SEARCH_SNIPPET = _int("WEB_SEARCH_SNIPPET", 2000)
+
+# --- Rate limiting ---
+# Максимум запросов к модели на одного пользователя в минуту. 0 = без лимита.
+RATE_LIMIT_PER_MINUTE = _int("RATE_LIMIT_PER_MINUTE", 5)

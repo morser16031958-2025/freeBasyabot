@@ -8,6 +8,7 @@ import asyncio
 import html
 import logging
 import signal
+import time
 
 import telegram
 from telegram import (
@@ -24,6 +25,28 @@ import provider
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Rate limiting: user_id -> список времененных меток запросов (секунды monotonic)
+_rate_limits: dict[int, list[float]] = {}
+
+
+def _check_rate_limit(user_id: int) -> str | None:
+    """Проверяет лимит запросов. Возвращает None если OK, иначе текст ошибки."""
+    if config.RATE_LIMIT_PER_MINUTE <= 0:
+        return None
+    now = time.monotonic()
+    window = 60.0
+    timestamps = _rate_limits.get(user_id, [])
+    # Убираем метки старше окна
+    timestamps = [t for t in timestamps if now - t < window]
+    if len(timestamps) >= config.RATE_LIMIT_PER_MINUTE:
+        oldest = timestamps[0]
+        wait = int(window - (now - oldest)) + 1
+        _rate_limits[user_id] = timestamps
+        return f"⏳ Лимит: не более {config.RATE_LIMIT_PER_MINUTE} запросов в минуту. Подождите {wait} сек."
+    timestamps.append(now)
+    _rate_limits[user_id] = timestamps
+    return None
 
 CHAT_INTRO = (
     "💬 <b>Бесплатный чат с {model}</b>\n\n"
@@ -44,7 +67,11 @@ HELP_TEXT = (
     "💬 Чат — общение с моделью\n"
     "🎯 Модель — выбор из бесплатных моделей\n"
     "⏹ Выйти — закрыть чат\n\n"
-    "Команды: /start /chat /stop /models /help"
+    "Команды:\n"
+    "/chat — войти в чат\n"
+    "/stop — выйти из чата\n"
+    "/models — выбрать модель\n"
+    "/help — эта справка"
 )
 
 # Короткие описания моделей — что юзер может ожидать от каждой.
@@ -123,7 +150,8 @@ async def menu_handler(update: Update, context):
     query = update.callback_query
     data = query.data
 
-    if not data.startswith(("menu_chat", "chat_")):
+    # Не сбрасываем chat_mode для действий внутри чата (включая выбор модели)
+    if not data.startswith(("menu_chat", "chat_", "model_")):
         context.user_data["chat_mode"] = False
 
     if data == "menu_chat":
@@ -167,6 +195,7 @@ async def _enter_chat(update: Update, context):
 async def _exit_chat(update: Update, context):
     context.user_data["chat_mode"] = False
     context.user_data["chat_history"] = []
+    context.user_data["awaiting_response"] = False
     await _reply_or_edit(update, "Чат закрыт. История очищена.", rk=_menu_rk())
 
 
@@ -243,6 +272,22 @@ async def page_next(update: Update, context):
 
 
 async def _chat_message(update: Update, context):
+    # Защита от флуда: пока модель отвечает, новые сообщения не принимаются
+    if context.user_data.get("awaiting_response"):
+        await update.message.reply_text(
+            "⏳ Подождите — модель ещё отвечает на предыдущее сообщение.",
+            reply_markup=_chat_kb(),
+        )
+        return
+
+    # Rate limiting: не более N запросов в минуту на пользователя
+    user_id = update.effective_user.id
+    rate_error = _check_rate_limit(user_id)
+    if rate_error:
+        await update.message.reply_text(rate_error, reply_markup=_chat_kb())
+        return
+
+    context.user_data["awaiting_response"] = True
     history = context.user_data.setdefault("chat_history", [])
     history.append({"role": "user", "content": update.message.text})
     logger.info("chat: user msg (%s chars), model=%s", len(update.message.text), context.user_data.get("chat_model", config.OLLAMA_MODEL))
@@ -269,13 +314,17 @@ async def _chat_message(update: Update, context):
         logger.warning("chat: provider error: %s", e)
         if status_msg is not None:
             await status_msg.delete()
-        await update.message.reply_text(f"⚠️ {e}", reply_markup=_chat_kb())
+        context.user_data["awaiting_response"] = False
+        await update.message.reply_text(
+            f"⚠️ {html.escape(str(e))}", reply_markup=_chat_kb()
+        )
         return
     except Exception:
         history.pop()
         logger.exception("chat: unexpected error")
         if status_msg is not None:
             await status_msg.delete()
+        context.user_data["awaiting_response"] = False
         await update.message.reply_text(
             "⚠️ Не удалось получить ответ. Попробуйте ещё раз.", reply_markup=_chat_kb()
         )
@@ -284,6 +333,7 @@ async def _chat_message(update: Update, context):
     if status_msg is not None:
         await status_msg.delete()
 
+    context.user_data["awaiting_response"] = False
     history.append({"role": "assistant", "content": answer})
     if len(history) > config.CHAT_HISTORY_LIMIT:
         extra = len(history) - config.CHAT_HISTORY_LIMIT
@@ -314,20 +364,38 @@ async def model_callback(update: Update, context):
     model = query.data.replace("model_", "", 1)
     context.user_data["chat_model"] = model
     desc = MODEL_DESCRIPTIONS.get(model)
+    was_in_chat = context.user_data.get("chat_mode")
+
     if desc:
         await query.answer(f"Выбрано: {model}")
-        await query.edit_message_text(
-            f"✅ <b>{html.escape(model)}</b>\n\n{desc}\n\nЧтобы начать — нажмите «💬 Чат».",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("← К списку", callback_data="menu_models")
-            ]]),
-        )
+        # Если пользователь был в чате — сразу возвращаем в него с новой моделью
+        if was_in_chat:
+            model_esc = html.escape(model)
+            await query.edit_message_text(
+                f"✅ Модель: <b>{model_esc}</b>\n\n"
+                f"{CHAT_INTRO.format(model=model_esc)}",
+                parse_mode="HTML",
+                reply_markup=_chat_kb(),
+            )
+        else:
+            await query.edit_message_text(
+                f"✅ <b>{html.escape(model)}</b>\n\n{desc}\n\n"
+                "Чтобы начать — нажмите «💬 Чат» или введите /chat.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("← К списку", callback_data="menu_models")
+                ]]),
+            )
         return
     await _show_models(update, context)
 
 
 async def cmd_chat(update: Update, context):
+    await _enter_chat(update, context)
+
+
+async def cmd_freechat(update: Update, context):
+    """Алиас /chat — войти в бесплатный чат."""
     await _enter_chat(update, context)
 
 
@@ -357,7 +425,7 @@ async def text_handler(update: Update, context):
         await _enter_chat(update, context)
         return
     if text == "🎯 Модель":
-        context.user_data["chat_mode"] = False
+        # Не сбрасываем chat_mode — пользователь может вернуться в чат после выбора
         await _show_models_reply(update, context)
         return
     if text == "❓ Помощь":
@@ -409,6 +477,7 @@ def build_app() -> Application | None:
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("chat", cmd_chat))
+    app.add_handler(CommandHandler("freechat", cmd_freechat))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("models", cmd_models))
     app.add_handler(CommandHandler("help", start))

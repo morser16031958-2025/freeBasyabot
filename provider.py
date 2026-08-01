@@ -134,16 +134,26 @@ async def ask(
 
                 data = resp.json()
                 try:
-                    message = data["choices"][0]["message"]
+                    choice = data["choices"][0]
+                    message = choice["message"]
                 except (KeyError, IndexError, TypeError):
                     raise ProviderError("Модель вернула некорректный ответ")
 
                 tool_calls = message.get("tool_calls") or []
                 text = message.get("content") or ""
+                finish_reason = choice.get("finish_reason", "")
 
                 if not tool_calls:
                     if not text:
+                        if finish_reason == "length":
+                            raise ProviderError(
+                                "Ответ обрезан: модель израсходовала лимит токенов на рассуждение. "
+                                "Попробуйте задать вопрос проще или выбрать другую модель."
+                            )
                         raise ProviderError("Модель вернула пустой ответ")
+                    # Если ответ есть, но обрезан — помечаем предупреждением
+                    if finish_reason == "length":
+                        text += "\n\n⚠️ <i>Ответ обрезан из-за лимита токенов. Попробуйте задать вопрос короче.</i>"
                     return text
 
                 messages.append({"role": "assistant", "content": text or None, "tool_calls": tool_calls})
