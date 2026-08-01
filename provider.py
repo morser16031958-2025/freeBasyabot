@@ -203,6 +203,7 @@ async def ask_stream(history: list[dict], model: str = None):
         "max_tokens": config.CHAT_MAX_TOKENS,
         "messages": messages,
         "stream": True,
+        "tools": _TOOLS,
     }
 
     async with httpx.AsyncClient(timeout=config.TIMEOUT) as h:
