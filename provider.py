@@ -182,6 +182,61 @@ async def ask(
     raise ProviderError("Слишком много шагов поиска — попробуйте переформулировать запрос")
 
 
+async def ask_stream(history: list[dict], model: str = None):
+    """Стриминговый вызов модели. Yields chunks текста по мере генерации."""
+    model = model or config.OLLAMA_MODEL
+    base, api_key, chat_path = _route(model)
+    if not api_key:
+        provider_name = "OPENROUTER" if chat_path == "/chat/completions" else "OLLAMA"
+        raise ProviderError(f"Бот не настроен: не задан {provider_name}_API_KEY")
+
+    messages = list(history)
+    if not messages or messages[0].get("role") != "system":
+        messages.insert(0, {"role": "system", "content": _system_message()})
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "max_tokens": config.CHAT_MAX_TOKENS,
+        "messages": messages,
+        "stream": True,
+    }
+
+    async with httpx.AsyncClient(timeout=config.TIMEOUT) as h:
+        try:
+            async with h.stream(
+                "POST",
+                f"{base}{chat_path}",
+                headers=headers,
+                json=payload,
+            ) as resp:
+                if resp.status_code == 429:
+                    raise ProviderError("Лимит бесплатного провайдера исчерпан, попробуйте позже")
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    raise ProviderError(f"Модель вернула ошибку {resp.status_code}")
+
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str.strip() == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                        delta = data["choices"][0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+        except httpx.RequestError as e:
+            raise ProviderError(f"Провайдер недоступен: {e}")
+
+
 async def web_search(query: str, max_results: int = None) -> str:
     """Поиск в интернете через Ollama web_search API. Возвращает текст для модели."""
     if not config.OLLAMA_API_KEY:

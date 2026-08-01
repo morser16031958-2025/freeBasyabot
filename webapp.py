@@ -9,7 +9,7 @@ import time
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
@@ -92,6 +92,55 @@ async def chat(request: Request):
     except Exception as e:
         logger.exception("chat error")
         return {"error": "Внутренняя ошибка сервера"}
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: Request):
+    """
+    Стриминговый чат: SSE с токенами по мере генерации.
+
+    Body: {"messages": [...], "model": "optional", "user_id": 123}
+    Events: data: {"token": "..."} | data: {"done": true} | data: {"error": "..."}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        async def err():
+            yield f'data: {json.dumps({"error": "Invalid JSON"})}\n\n'
+        return StreamingResponse(err(), media_type="text/event-stream")
+
+    messages = body.get("messages", [])
+    model = body.get("model") or config.OLLAMA_MODEL
+    user_id = body.get("user_id", 0)
+
+    if not messages:
+        async def err():
+            yield f'data: {json.dumps({"error": "No messages"})}\n\n'
+        return StreamingResponse(err(), media_type="text/event-stream")
+
+    # Rate limiting
+    rate_error = _check_rate_limit(user_id)
+    if rate_error:
+        async def err():
+            yield f'data: {json.dumps({"error": rate_error})}\n\n'
+        return StreamingResponse(err(), media_type="text/event-stream")
+
+    # Ограничиваем историю
+    if len(messages) > config.CHAT_HISTORY_LIMIT:
+        messages = messages[-config.CHAT_HISTORY_LIMIT:]
+
+    async def generate():
+        try:
+            async for chunk in provider.ask_stream(messages, model=model):
+                yield f"data: {json.dumps({'token': chunk})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except provider.ProviderError as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            logger.exception("stream error")
+            yield f"data: {json.dumps({'error': 'Внутренняя ошибка сервера'})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.get("/api/models")
