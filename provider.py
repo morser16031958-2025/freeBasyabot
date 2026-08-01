@@ -74,6 +74,13 @@ _TOOLS = [
 ]
 
 
+def _route(model: str):
+    """Возвращает (base_url, api_key, chat_path) для модели: Ollama или OpenRouter."""
+    if model in config.OPENROUTER_MODELS:
+        return config.OPENROUTER_BASE, config.OPENROUTER_API_KEY, "/chat/completions"
+    return config.OLLAMA_BASE, config.OLLAMA_API_KEY, "/v1/chat/completions"
+
+
 async def ask(
     history: list[dict],
     model: str = None,
@@ -84,14 +91,17 @@ async def ask(
     on_tool — необязательный async callback (name: str, args: dict), вызывается
     перед выполнением каждого инструмента (для индикации «ищу…» в боте).
     """
-    if not config.OLLAMA_API_KEY:
-        raise ProviderError("Бот не настроен: не задан OLLAMA_API_KEY")
+    model = model or config.OLLAMA_MODEL
+    base, api_key, chat_path = _route(model)
+    if not api_key:
+        provider_name = "OPENROUTER" if chat_path == "/chat/completions" else "OLLAMA"
+        raise ProviderError(f"Бот не настроен: не задан {provider_name}_API_KEY")
 
     messages = list(history)
     if not messages or messages[0].get("role") != "system":
         messages.insert(0, {"role": "system", "content": _system_message()})
     headers = {
-        "Authorization": f"Bearer {config.OLLAMA_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "content-type": "application/json",
     }
 
@@ -99,7 +109,7 @@ async def ask(
         async with httpx.AsyncClient(timeout=config.TIMEOUT) as h:
             for step in range(config.AGENT_MAX_ITERS + 1):
                 payload = {
-                    "model": model or config.OLLAMA_MODEL,
+                    "model": model,
                     "max_tokens": config.CHAT_MAX_TOKENS,
                     "messages": messages,
                     "tools": _TOOLS,
@@ -107,7 +117,7 @@ async def ask(
                 logger.info("ollama: step %d, %d messages, model=%s", step, len(messages), payload["model"])
                 try:
                     resp = await h.post(
-                        f"{config.OLLAMA_BASE}/v1/chat/completions",
+                        f"{base}{chat_path}",
                         headers=headers,
                         json=payload,
                     )

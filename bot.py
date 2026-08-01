@@ -55,6 +55,7 @@ MODEL_DESCRIPTIONS = {
     "nemotron-3-super": "⚖️ Баланс скорости и качества, универсальная для повседневных вопросов.",
     "nemotron-3-nano:30b": "🚀 Самая лёгкая и быстрая из Nemotron, для простых вопросов и быстрых ответов.",
     "gpt-oss:20b": "⚡ Компактная версия gpt-oss: быстро, по делу, умеет искать в интернете.",
+    "poolside/laguna-s-2.1:free": "💻 Сильнейшая бесплатная модель для программирования: пишет код, чинит и объясняет. Думает над сложными задачами.",
 }
 
 
@@ -299,7 +300,7 @@ async def _show_models(update: Update, context):
             f"{'✅ ' if m == current else '➖ '}{m}",
             callback_data=f"model_{m}"
         )]
-        for m in config.OLLAMA_MODELS
+        for m in config.MODELS
     ] + [[InlineKeyboardButton("← Назад", callback_data="menu_back")]])
     await query.edit_message_text(
         _models_hint(current),
@@ -343,7 +344,7 @@ async def cmd_models(update: Update, context):
     await update.message.reply_text(
         _models_hint(current),
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"{m}", callback_data=f"model_{m}")] for m in config.OLLAMA_MODELS
+            [InlineKeyboardButton(f"{m}", callback_data=f"model_{m}")] for m in config.MODELS
         ]),
         parse_mode="HTML",
     )
@@ -391,7 +392,7 @@ async def _show_models_reply(update: Update, context):
             f"{'✅ ' if m == current else '➖ '}{m}",
             callback_data=f"model_{m}"
         )]
-        for m in config.OLLAMA_MODELS
+        for m in config.MODELS
     ] + [[InlineKeyboardButton("← Назад", callback_data="menu_back")]])
     await update.message.reply_text(
         _models_hint(current),

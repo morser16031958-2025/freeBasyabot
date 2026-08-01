@@ -35,6 +35,16 @@ OLLAMA_MODELS = _list("OLLAMA_MODELS") or [
     "nemotron-3-ultra",
 ]
 
+# --- OpenRouter (бесплатные модели через openrouter.ai/api/v1) ---
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE = os.getenv("OPENROUTER_BASE", "https://openrouter.ai/api/v1").rstrip("/")
+OPENROUTER_MODELS = _list("OPENROUTER_MODELS") or [
+    "poolside/laguna-s-2.1:free",
+]
+
+# Модели в выпадашке бота: сначала Ollama, затем OpenRouter (без дублей).
+MODELS = list(dict.fromkeys(OLLAMA_MODELS + OPENROUTER_MODELS))
+
 # --- Чат ---
 CHAT_MAX_TOKENS = _int("CHAT_MAX_TOKENS", 2048)
 CHAT_HISTORY_LIMIT = _int("CHAT_HISTORY_LIMIT", 20)
