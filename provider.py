@@ -9,10 +9,13 @@
 """
 import datetime
 import json
+import logging
 
 import httpx
 
 import config
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderError(Exception):
@@ -94,19 +97,21 @@ async def ask(
 
     try:
         async with httpx.AsyncClient(timeout=config.TIMEOUT) as h:
-            for _ in range(config.AGENT_MAX_ITERS + 1):
+            for step in range(config.AGENT_MAX_ITERS + 1):
                 payload = {
                     "model": model or config.OLLAMA_MODEL,
                     "max_tokens": config.CHAT_MAX_TOKENS,
                     "messages": messages,
                     "tools": _TOOLS,
                 }
+                logger.info("ollama: step %d, %d messages, model=%s", step, len(messages), payload["model"])
                 try:
                     resp = await h.post(
                         f"{config.OLLAMA_BASE}/v1/chat/completions",
                         headers=headers,
                         json=payload,
                     )
+                    logger.info("ollama: step %d -> HTTP %d", step, resp.status_code)
                 except httpx.RequestError as e:
                     raise ProviderError(f"Провайдер недоступен: {e}")
 

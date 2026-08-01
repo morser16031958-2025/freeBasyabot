@@ -152,9 +152,82 @@ async def _exit_chat(update: Update, context):
     await _reply_or_edit(update, "Чат закрыт. История очищена.", rk=_menu_rk())
 
 
+def _split_text(text: str, limit: int = None) -> list[str]:
+    """Режет длинный текст на куски по limit символов, стараясь не разрывать слова."""
+    limit = limit or config.CHAT_CHUNK_SIZE
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        chunk = text[:limit]
+        cut = chunk.rfind(" ")
+        if cut > limit // 2:
+            chunks.append(chunk[:cut].rstrip())
+            text = text[cut:].lstrip()
+        else:
+            chunks.append(chunk)
+            text = text[limit:]
+    return chunks
+
+
+async def _send_long_reply(update: Update, context, text: str, reply_markup=None, parse_mode="HTML"):
+    """Отправляет длинный ответ частями с кнопкой «Далее ▸».
+
+    Состояние листания хранится в user_data: части ответа + номер текущей.
+    На последней части кнопка «Далее» исчезает и возвращается обычная
+    клавиатура чата.
+    """
+    parts = _split_text(text)
+    if len(parts) == 1:
+        return await update.message.reply_text(
+            parts[0], reply_markup=reply_markup, parse_mode=parse_mode
+        )
+
+    context.user_data["long_parts"] = parts
+    context.user_data["long_idx"] = 0
+    context.user_data["long_final_markup"] = reply_markup
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"Далее ▸ (1/{len(parts)})", callback_data="page_next")
+    ]])
+    return await update.message.reply_text(
+        parts[0], reply_markup=kb, parse_mode=parse_mode
+    )
+
+
+async def page_next(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+
+    parts = context.user_data.get("long_parts")
+    idx = context.user_data.get("long_idx", 0)
+    if not parts:
+        await query.edit_message_text("Сообщение устарело.")
+        return
+
+    idx += 1
+    context.user_data["long_idx"] = idx
+
+    if idx >= len(parts):
+        context.user_data.pop("long_parts", None)
+        context.user_data.pop("long_idx", None)
+        markup = context.user_data.pop("long_final_markup", None)
+        await query.edit_message_text(parts[-1], reply_markup=markup, parse_mode="HTML")
+        return
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"Далее ▸ ({idx + 1}/{len(parts)})", callback_data="page_next")
+    ]])
+    await query.edit_message_text(parts[idx], reply_markup=kb, parse_mode="HTML")
+
+
 async def _chat_message(update: Update, context):
     history = context.user_data.setdefault("chat_history", [])
     history.append({"role": "user", "content": update.message.text})
+    logger.info("chat: user msg (%s chars), model=%s", len(update.message.text), context.user_data.get("chat_model", config.OLLAMA_MODEL))
 
     model = context.user_data.get("chat_model", config.OLLAMA_MODEL)
     status_msg = None
@@ -162,6 +235,7 @@ async def _chat_message(update: Update, context):
     async def on_tool(name: str, args: dict):
         nonlocal status_msg
         query = args.get("query") or args.get("url") or ""
+        logger.info("chat: tool call %s %s", name, query[:80])
         text = f"🔎 Ищу в интернете: <i>{html.escape(query[:100])}</i>…"
         if status_msg is None:
             status_msg = await update.message.reply_text(text, parse_mode="HTML")
@@ -171,15 +245,17 @@ async def _chat_message(update: Update, context):
     try:
         await update.effective_chat.send_action("typing")
         answer = await provider.ask(history, model=model, on_tool=on_tool)
+        logger.info("chat: got answer (%s chars)", len(answer))
     except provider.ProviderError as e:
         history.pop()
+        logger.warning("chat: provider error: %s", e)
         if status_msg is not None:
             await status_msg.delete()
         await update.message.reply_text(f"⚠️ {e}", reply_markup=_chat_kb())
         return
     except Exception:
         history.pop()
-        logger.exception("Chat request failed")
+        logger.exception("chat: unexpected error")
         if status_msg is not None:
             await status_msg.delete()
         await update.message.reply_text(
@@ -195,7 +271,7 @@ async def _chat_message(update: Update, context):
         extra = len(history) - config.CHAT_HISTORY_LIMIT
         del history[: extra + extra % 2]
 
-    await update.message.reply_text(html.escape(answer), reply_markup=_chat_kb(), parse_mode="HTML")
+    await _send_long_reply(update, context, html.escape(answer), reply_markup=_chat_kb())
 
 
 async def _show_models(update: Update, context):
@@ -309,6 +385,7 @@ def build_app() -> Application | None:
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CallbackQueryHandler(menu_handler, pattern=r"^(menu_|chat_)"))
     app.add_handler(CallbackQueryHandler(model_callback, pattern=r"^model_"))
+    app.add_handler(CallbackQueryHandler(page_next, pattern=r"^page_next$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     return app

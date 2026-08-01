@@ -40,6 +40,10 @@ CHAT_MAX_TOKENS = _int("CHAT_MAX_TOKENS", 2048)
 CHAT_HISTORY_LIMIT = _int("CHAT_HISTORY_LIMIT", 20)
 TIMEOUT = _int("TIMEOUT", 600)
 
+# Максимальная длина одной порции ответа, символов (лимит Telegram — 4096).
+# Ответ длиннее — разбивается на части с кнопкой «Далее ▸».
+CHAT_CHUNK_SIZE = _int("CHAT_CHUNK_SIZE", 3500)
+
 # --- Веб-поиск ---
 AGENT_MAX_ITERS = _int("AGENT_MAX_ITERS", 4)
 WEB_SEARCH_RESULTS = _int("WEB_SEARCH_RESULTS", 5)

@@ -120,6 +120,30 @@ def test_bot_builds_without_token():
     assert bot.build_app() is None
 
 
+def test_split_text_short():
+    import bot
+    assert bot._split_text("короткий ответ") == ["короткий ответ"]
+
+
+def test_split_text_long():
+    import bot
+    text = "слово " * 2000
+    parts = bot._split_text(text, limit=3500)
+    assert len(parts) > 1
+    for p in parts:
+        assert len(p) <= 3500
+    assert " ".join(parts).split() == text.split()
+
+
+def test_split_text_single_word():
+    import bot
+    text = "x" * 9000
+    parts = bot._split_text(text, limit=3500)
+    assert len(parts) == 3
+    assert all(len(p) <= 3500 for p in parts)
+    assert "".join(parts) == text
+
+
 def test_text_handler_enter_chat_via_reply_keyboard():
     """Нажатие reply-кнопки «💬 Чат» входит в чат, а не уходит модели."""
 
