@@ -17,6 +17,7 @@ from telegram import (
     KeyboardButton,
     ReplyKeyboardMarkup,
     Update,
+    WebAppInfo,
 )
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
@@ -69,6 +70,7 @@ HELP_TEXT = (
     "⏹ Выйти — закрыть чат\n\n"
     "Команды:\n"
     "/chat — войти в чат\n"
+    "/app — открыть мини-приложение\n"
     "/stop — выйти из чата\n"
     "/models — выбрать модель\n"
     "/help — эта справка"
@@ -93,22 +95,27 @@ def _models_hint(current: str) -> str:
 
 def _menu_rk():
     """Постоянная reply-клавиатура под полем ввода."""
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("💬 Чат")],
-            [KeyboardButton("🎯 Модель"), KeyboardButton("⏹ Выйти")],
-            [KeyboardButton("❓ Помощь")],
-        ],
-        resize_keyboard=True,
-    )
+    buttons = [
+        [KeyboardButton("💬 Чат")],
+        [KeyboardButton("🎯 Модель"), KeyboardButton("⏹ Выйти")],
+        [KeyboardButton("❓ Помощь")],
+    ]
+    # Кнопка Mini App (только если URL настроен)
+    if config.WEBAPP_URL:
+        buttons.insert(0, [KeyboardButton("🚀 Приложение", web_app=WebAppInfo(url=config.WEBAPP_URL))])
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 
 def _menu_kb():
-    return InlineKeyboardMarkup([
+    buttons = [
         [InlineKeyboardButton("💬 Чат", callback_data="menu_chat")],
         [InlineKeyboardButton("🎯 Модель", callback_data="menu_models")],
         [InlineKeyboardButton("❓ Помощь", callback_data="menu_help")],
-    ])
+    ]
+    # Кнопка Mini App (только если URL настроен)
+    if config.WEBAPP_URL:
+        buttons.insert(0, [InlineKeyboardButton("🚀 Приложение", web_app=WebAppInfo(url=config.WEBAPP_URL))])
+    return InlineKeyboardMarkup(buttons)
 
 
 def _chat_kb():
@@ -141,6 +148,10 @@ async def start(update: Update, context):
         f"👋 Привет, {user.first_name}!\n\n"
         "Это бесплатный бот для чата с AI-моделями.\n"
         "Токены не списываются — сервис полностью бесплатный.\n\n"
+    )
+    if config.WEBAPP_URL:
+        text += "🚀 <b>Приложение</b> — удобный чат с моделью в отдельном окне.\n"
+    text += (
         "Кнопки внизу — всегда под рукой. Нажмите «Чат» и общайтесь."
     )
     await _reply_or_edit(update, text, rk=_menu_rk())
@@ -469,6 +480,25 @@ async def _show_models_reply(update: Update, context):
     )
 
 
+async def cmd_app(update: Update, context):
+    """Запуск Mini App."""
+    if not config.WEBAPP_URL:
+        await update.message.reply_text(
+            "⚠️ Мини-приложение не настроено. Укажите WEBAPP_URL в .env.",
+            reply_markup=_menu_rk(),
+        )
+        return
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🚀 Открыть приложение", web_app=WebAppInfo(url=config.WEBAPP_URL))
+    ]])
+    await update.message.reply_text(
+        "🚀 <b>AI Chat</b> — удобный чат с моделью в отдельном окне.\n\n"
+        "Нажмите кнопку ниже, чтобы открыть.",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
 def build_app() -> Application | None:
     if not config.BOT_TOKEN:
         logger.warning("BOT_TOKEN not set")
@@ -478,6 +508,7 @@ def build_app() -> Application | None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("chat", cmd_chat))
     app.add_handler(CommandHandler("freechat", cmd_freechat))
+    app.add_handler(CommandHandler("app", cmd_app))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("models", cmd_models))
     app.add_handler(CommandHandler("help", start))

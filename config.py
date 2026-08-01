@@ -62,3 +62,8 @@ WEB_SEARCH_SNIPPET = _int("WEB_SEARCH_SNIPPET", 2000)
 # --- Rate limiting ---
 # Максимум запросов к модели на одного пользователя в минуту. 0 = без лимита.
 RATE_LIMIT_PER_MINUTE = _int("RATE_LIMIT_PER_MINUTE", 5)
+
+# --- Mini App ---
+# URL веб-приложения для Telegram Mini App (должен быть HTTPS)
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")
+WEBAPP_PORT = _int("WEBAPP_PORT", 8080)
