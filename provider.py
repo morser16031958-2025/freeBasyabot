@@ -7,6 +7,7 @@
 Веб-инструменты (web_search, web_fetch) — нативные и бесплатные API Ollama,
 работают с тем же ключом: https://docs.ollama.com/capabilities/web-search
 """
+import datetime
 import json
 
 import httpx
@@ -16,6 +17,22 @@ import config
 
 class ProviderError(Exception):
     """Ошибка, которую можно показать пользователю."""
+
+
+_WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+_MONTHS = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+
+
+def _system_message() -> str:
+    """Дата и время сейчас — модели не знают их сами, подсказываем в промпте."""
+    now = datetime.datetime.now()
+    return (
+        f"Сегодня {_WEEKDAYS[now.weekday()]}, {now.day} {_MONTHS[now.month - 1]} {now.year} года. "
+        f"Текущее время: {now:%H:%M}."
+    )
 
 
 # Инструменты в OpenAI-формате, чтобы модель сама решала, когда искать.
@@ -68,6 +85,8 @@ async def ask(
         raise ProviderError("Бот не настроен: не задан OLLAMA_API_KEY")
 
     messages = list(history)
+    if not messages or messages[0].get("role") != "system":
+        messages.insert(0, {"role": "system", "content": _system_message()})
     headers = {
         "Authorization": f"Bearer {config.OLLAMA_API_KEY}",
         "content-type": "application/json",

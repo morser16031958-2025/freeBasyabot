@@ -33,7 +33,6 @@ OLLAMA_MODELS = _list("OLLAMA_MODELS") or [
     "minimax-m3",
     "gpt-oss:120b",
     "nemotron-3-ultra",
-    "gemma4:31b",
 ]
 
 # --- Чат ---

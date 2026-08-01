@@ -58,7 +58,10 @@ def test_ask_hits_correct_url_and_format(monkeypatch):
     assert call["url"].endswith("/v1/chat/completions")
     assert call["headers"]["Authorization"] == "Bearer test_key"
     assert call["json"]["model"] == config.OLLAMA_MODEL
-    assert call["json"]["messages"] == [{"role": "user", "content": "ping"}]
+    msgs = call["json"]["messages"]
+    assert msgs[0]["role"] == "system"
+    assert "Сегодня" in msgs[0]["content"]
+    assert msgs[1:] == [{"role": "user", "content": "ping"}]
 
 
 def test_ask_uses_explicit_model(monkeypatch):
