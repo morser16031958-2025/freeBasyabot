@@ -209,6 +209,33 @@
         .tg-dark .message code {
             background: rgba(255,255,255,0.1);
         }
+
+        .message pre {
+            background: rgba(0,0,0,0.08);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            margin: 6px 0;
+            white-space: pre-wrap;
+        }
+
+        .tg-dark .message pre {
+            background: rgba(255,255,255,0.08);
+        }
+
+        .message p {
+            margin: 0 0 8px 0;
+        }
+
+        .message p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message b {
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -281,11 +308,40 @@
             if (welcome) welcome.remove();
         }
 
+        function formatText(text) {
+            // Экранируем HTML
+            let s = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Блочный код: ```...```
+            s = s.replace(/```([\s\S]*?)```/g, '<pre>$1</pre>');
+
+            // Жирный: **...**
+            s = s.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+
+            // Код: `...`
+            s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+            // Абзацы: двойной перенос → разделитель
+            s = s.split(/\n{2,}/).map(p => {
+                // Внутри абзаца — одинарный перенос → <br>
+                return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+            }).join('');
+
+            return s;
+        }
+
         function addMessage(role, text) {
             clearWelcome();
             const div = document.createElement('div');
             div.className = `message ${role}`;
-            div.textContent = text;
+            if (role.includes('bot')) {
+                div.innerHTML = formatText(text);
+            } else {
+                div.textContent = text;
+            }
             messagesEl.appendChild(div);
             scrollToBottom();
             return div;
