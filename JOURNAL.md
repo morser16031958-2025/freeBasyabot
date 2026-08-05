@@ -139,5 +139,12 @@ On-demand генерация ключей Ollama Cloud не реализуема
 **Файлы:** `webapp.py`, `webapp/index.html`, `main.py`, `config.py`, `bot.py`
 **Проверено:** Тесты пройдены (17/17).
 
+### Деплой на VPS
+- Добавлены `fastapi` и `uvicorn` в `requirements.txt`
+- Проброшен порт 8080 в `docker-compose.yml`
+- Настроен Caddy reverse proxy: `chat.rusbas.duckdns.org` → `free-bot:8080`
+- Сертификат Let's Encrypt получен автоматически
+- `WEBAPP_URL=https://chat.rusbas.duckdns.org` добавлен в `.env`
+
 ---
 

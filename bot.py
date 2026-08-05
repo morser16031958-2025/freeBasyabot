@@ -65,15 +65,15 @@ MODELS_HINT = (
 
 HELP_TEXT = (
     "🤖 <b>Бесплатный AI-бот</b>\n\n"
-    "💬 Чат — общение с моделью\n"
+    "💬 Чат в боте — общение с моделью\n"
+    "💬 Чат в приложении — удобный чат в отдельном окне\n"
     "🎯 Модель — выбор из бесплатных моделей\n"
     "⏹ Выйти — закрыть чат\n\n"
     "Команды:\n"
     "/chat — войти в чат\n"
     "/app — открыть мини-приложение\n"
     "/stop — выйти из чата\n"
-    "/models — выбрать модель\n"
-    "/help — эта справка"
+    "/models — выбрать модель"
 )
 
 # Короткие описания моделей — что юзер может ожидать от каждой.
@@ -96,25 +96,23 @@ def _models_hint(current: str) -> str:
 def _menu_rk():
     """Постоянная reply-клавиатура под полем ввода."""
     buttons = [
-        [KeyboardButton("💬 Чат")],
+        [KeyboardButton("💬 Чат в боте")],
         [KeyboardButton("🎯 Модель"), KeyboardButton("⏹ Выйти")],
-        [KeyboardButton("❓ Помощь")],
     ]
     # Кнопка Mini App (только если URL настроен)
     if config.WEBAPP_URL:
-        buttons.insert(0, [KeyboardButton("🚀 Приложение", web_app=WebAppInfo(url=config.WEBAPP_URL))])
+        buttons.insert(0, [KeyboardButton("💬 Чат в приложении", web_app=WebAppInfo(url=config.WEBAPP_URL))])
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 
 def _menu_kb():
     buttons = [
-        [InlineKeyboardButton("💬 Чат", callback_data="menu_chat")],
+        [InlineKeyboardButton("💬 Чат в боте", callback_data="menu_chat")],
         [InlineKeyboardButton("🎯 Модель", callback_data="menu_models")],
-        [InlineKeyboardButton("❓ Помощь", callback_data="menu_help")],
     ]
     # Кнопка Mini App (только если URL настроен)
     if config.WEBAPP_URL:
-        buttons.insert(0, [InlineKeyboardButton("🚀 Приложение", web_app=WebAppInfo(url=config.WEBAPP_URL))])
+        buttons.insert(0, [InlineKeyboardButton("💬 Чат в приложении", web_app=WebAppInfo(url=config.WEBAPP_URL))])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -150,9 +148,9 @@ async def start(update: Update, context):
         "Токены не списываются — сервис полностью бесплатный.\n\n"
     )
     if config.WEBAPP_URL:
-        text += "🚀 <b>Приложение</b> — удобный чат с моделью в отдельном окне.\n"
+        text += "💬 <b>Чат в приложении</b> — удобный чат с моделью в отдельном окне.\n"
     text += (
-        "Кнопки внизу — всегда под рукой. Нажмите «Чат» и общайтесь."
+        "Кнопки внизу — всегда под рукой. Нажмите «Чат в боте» и общайтесь."
     )
     await _reply_or_edit(update, text, rk=_menu_rk())
 
@@ -184,10 +182,6 @@ async def menu_handler(update: Update, context):
     elif data == "menu_models":
         await query.answer()
         await _show_models(update, context)
-
-    elif data == "menu_help":
-        await query.answer()
-        await query.edit_message_text(HELP_TEXT, reply_markup=_menu_kb(), parse_mode="HTML")
 
     elif data == "menu_back":
         await query.answer()
@@ -391,7 +385,7 @@ async def model_callback(update: Update, context):
         else:
             await query.edit_message_text(
                 f"✅ <b>{html.escape(model)}</b>\n\n{desc}\n\n"
-                "Чтобы начать — нажмите «💬 Чат» или введите /chat.",
+                "Чтобы начать — нажмите «💬 Чат в боте» или введите /chat.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("← К списку", callback_data="menu_models")
@@ -432,16 +426,12 @@ async def cmd_models(update: Update, context):
 async def text_handler(update: Update, context):
     text = update.message.text.strip()
 
-    if text == "💬 Чат":
+    if text == "💬 Чат в боте":
         await _enter_chat(update, context)
         return
     if text == "🎯 Модель":
         # Не сбрасываем chat_mode — пользователь может вернуться в чат после выбора
         await _show_models_reply(update, context)
-        return
-    if text == "❓ Помощь":
-        context.user_data["chat_mode"] = False
-        await update.message.reply_text(HELP_TEXT, reply_markup=_menu_rk(), parse_mode="HTML")
         return
     if text == "⏹ Выйти":
         if context.user_data.get("chat_mode"):
@@ -458,8 +448,7 @@ async def text_handler(update: Update, context):
         await update.message.reply_text(
             "Используйте меню внизу или команды:\n"
             "/chat — чат с моделью\n"
-            "/models — выбрать модель\n"
-            "/help — справка",
+            "/models — выбрать модель",
             reply_markup=_menu_rk(),
         )
 
@@ -492,7 +481,7 @@ async def cmd_app(update: Update, context):
         InlineKeyboardButton("🚀 Открыть приложение", web_app=WebAppInfo(url=config.WEBAPP_URL))
     ]])
     await update.message.reply_text(
-        "🚀 <b>AI Chat</b> — удобный чат с моделью в отдельном окне.\n\n"
+        "💬 <b>Чат в приложении</b> — удобный чат с моделью в отдельном окне.\n\n"
         "Нажмите кнопку ниже, чтобы открыть.",
         reply_markup=kb,
         parse_mode="HTML",

@@ -145,7 +145,7 @@ def test_split_text_single_word():
 
 
 def test_text_handler_enter_chat_via_reply_keyboard():
-    """Нажатие reply-кнопки «💬 Чат» входит в чат, а не уходит модели."""
+    """Нажатие reply-кнопки «💬 Чат в боте» входит в чат, а не уходит модели."""
 
     class _Msg:
         def __init__(self, text):
@@ -164,7 +164,7 @@ def test_text_handler_enter_chat_via_reply_keyboard():
             self.effective_chat = type("C", (), {"send_action": lambda self, a: None})
 
     import bot
-    update = _Update("💬 Чат")
+    update = _Update("💬 Чат в боте")
     context = type("Ctx", (), {"user_data": {}})()
 
     async def run():
