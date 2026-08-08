@@ -89,11 +89,13 @@ async def ask(
     history: list[dict],
     model: str = None,
     on_tool=None,
+    on_queue=None,
 ) -> str:
     """Агентный вызов: пока модель просит инструменты, исполняем их и повторяем.
 
     on_tool — необязательный async callback (name: str, args: dict), вызывается
     перед выполнением каждого инструмента (для индикации «ищу…» в боте).
+    on_queue — необязательный async callback(), вызывается когда запрос встал в очередь.
     """
     model = model or config.OLLAMA_MODEL
     base, api_key, chat_path = _route(model)
@@ -112,6 +114,10 @@ async def ask(
     # Ollama Cloud: 1 ключ = 1 одновременный запрос. Семафор для очереди.
     is_ollama = chat_path == "/v1/chat/completions"
     sem = _ollama_semaphore if is_ollama else asyncio.Semaphore(1)
+
+    # Проверяем, занят ли семафор (для показа "в очереди")
+    if is_ollama and sem.locked() and on_queue:
+        await on_queue()
 
     try:
         async with sem, httpx.AsyncClient(timeout=config.TIMEOUT) as h:
@@ -190,11 +196,12 @@ async def ask(
     raise ProviderError("Слишком много шагов поиска — попробуйте переформулировать запрос")
 
 
-async def ask_stream(history: list[dict], model: str = None):
+async def ask_stream(history: list[dict], model: str = None, on_queue=None):
     """Стриминговый вызов модели с поддержкой tool calls.
 
     Сначала проверяет non-streaming, есть ли tool calls.
     Если есть — исполняет их, затем стримит финальный ответ.
+    on_queue — необязательный async callback(), вызывается когда запрос встал в очередь.
     """
     model = model or config.OLLAMA_MODEL
     base, api_key, chat_path = _route(model)
@@ -214,6 +221,10 @@ async def ask_stream(history: list[dict], model: str = None):
     # Ollama Cloud: 1 ключ = 1 одновременный запрос. Семафор для очереди.
     is_ollama = chat_path == "/v1/chat/completions"
     sem = _ollama_semaphore if is_ollama else asyncio.Semaphore(1)
+
+    # Проверяем, занят ли семафор (для показа "в очереди")
+    if is_ollama and sem.locked() and on_queue:
+        await on_queue()
 
     async with sem, httpx.AsyncClient(timeout=config.TIMEOUT) as h:
         for step in range(config.AGENT_MAX_ITERS + 1):

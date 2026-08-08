@@ -133,6 +133,16 @@ async def chat_stream(request: Request):
 
     async def generate():
         try:
+            async def on_queue():
+                yield f"data: {json.dumps({'token': '⏳ Жду очереди. Для работы без очереди перейди на платную версию\\n'})}\n\n"
+
+            # Проверяем семафор заранее для показа очереди
+            from provider import _ollama_semaphore, _route
+            _, _, chat_path = _route(model)
+            is_ollama = chat_path == "/v1/chat/completions"
+            if is_ollama and _ollama_semaphore.locked():
+                yield f"data: {json.dumps({'token': '⏳ Жду очереди. Для работы без очереди перейди на платную версию\\n'})}\n\n"
+
             async for chunk in provider.ask_stream(messages, model=model):
                 yield f"data: {json.dumps({'token': chunk})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"

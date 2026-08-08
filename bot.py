@@ -300,6 +300,14 @@ async def _chat_message(update: Update, context):
     model = context.user_data.get("chat_model", config.OLLAMA_MODEL)
     status_msg = None
 
+    async def on_queue():
+        nonlocal status_msg
+        text = "⏳ Жду очереди. Для работы без очереди перейди на платную версию"
+        if status_msg is None:
+            status_msg = await update.message.reply_text(text)
+        else:
+            await status_msg.edit_text(text)
+
     async def on_tool(name: str, args: dict):
         nonlocal status_msg
         query = args.get("query") or args.get("url") or ""
