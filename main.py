@@ -24,7 +24,7 @@ async def _main():
         webapp.app,
         host="0.0.0.0",
         port=WEBAPP_PORT,
-        log_level="warning",
+        log_level="info",
     )
     server = uvicorn.Server(uv_config)
     asyncio.create_task(server.serve())

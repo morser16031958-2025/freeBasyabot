@@ -262,7 +262,9 @@
         const sendBtn = document.getElementById('sendBtn');
         const modelSelect = document.getElementById('modelSelect');
 
-        let chatHistory = [];
+        // История по моделям: { "model-name": [{role, content}, ...] }
+        const chatHistories = {};
+        const MAX_HISTORY = 5; // 5 пар user+assistant
         let isWaiting = false;
         let currentModel = '';
 
@@ -293,13 +295,23 @@
                     modelSelect.appendChild(opt);
                 });
                 currentModel = data.default;
+                // Инициализируем историю для каждой модели
+                data.models.forEach(m => {
+                    if (!chatHistories[m]) chatHistories[m] = [];
+                });
             } catch (e) {
                 console.error('Failed to load models:', e);
             }
         }
 
+        function getHistory() {
+            if (!chatHistories[currentModel]) chatHistories[currentModel] = [];
+            return chatHistories[currentModel];
+        }
+
         modelSelect.addEventListener('change', () => {
             currentModel = modelSelect.value;
+            renderMessages();
         });
 
         // --- Messages ---
@@ -309,31 +321,20 @@
         }
 
         function formatText(text) {
-            // Экранируем HTML
             let s = text
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
-
-            // Блочный код: ```...```
             s = s.replace(/```([\s\S]*?)```/g, '<pre>$1</pre>');
-
-            // Жирный: **...**
             s = s.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-
-            // Код: `...`
             s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-            // Абзацы: двойной перенос → разделитель
             s = s.split(/\n{2,}/).map(p => {
-                // Внутри абзаца — одинарный перенос → <br>
                 return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
             }).join('');
-
             return s;
         }
 
-        function addMessage(role, text) {
+        function addMessageToDOM(role, text) {
             clearWelcome();
             const div = document.createElement('div');
             div.className = `message ${role}`;
@@ -343,8 +344,18 @@
                 div.textContent = text;
             }
             messagesEl.appendChild(div);
-            scrollToBottom();
             return div;
+        }
+
+        function renderMessages() {
+            messagesEl.innerHTML = '';
+            const history = getHistory();
+            if (history.length === 0) {
+                messagesEl.innerHTML = '<div class="welcome"><h2>AI Chat</h2><p>Выберите модель и начните общаться</p></div>';
+                return;
+            }
+            history.forEach(msg => addMessageToDOM(msg.role === 'assistant' ? 'bot' : msg.role, msg.content));
+            scrollToBottom();
         }
 
         function scrollToBottom() {
@@ -361,10 +372,17 @@
             inputEl.value = '';
             autoResize();
 
-            addMessage('user', text);
-            chatHistory.push({ role: 'user', content: text });
+            const history = getHistory();
+            addMessageToDOM('user', text);
+            history.push({ role: 'user', content: text });
 
-            const botDiv = addMessage('bot', '');
+            // Ограничиваем: MAX_HISTORY пар (2*MAX_HISTORY сообщений)
+            while (history.length > MAX_HISTORY * 2) {
+                history.shift();
+                history.shift();
+            }
+
+            const botDiv = addMessageToDOM('bot', '');
             let fullReply = '';
 
             try {
@@ -372,7 +390,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        messages: chatHistory,
+                        messages: history,
                         model: currentModel,
                         user_id: userId,
                     }),
@@ -388,7 +406,7 @@
 
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
-                    buffer = lines.pop(); // Оставляем неполную строку
+                    buffer = lines.pop();
 
                     for (const line of lines) {
                         if (!line.startsWith('data: ')) continue;
@@ -397,7 +415,7 @@
                             if (data.error) {
                                 botDiv.className = 'message error';
                                 botDiv.textContent = data.error;
-                                chatHistory.pop();
+                                history.pop(); // Убираем user сообщение при ошибке
                                 break;
                             }
                             if (data.token) {
@@ -406,20 +424,15 @@
                                 scrollToBottom();
                             }
                             if (data.done) {
-                                chatHistory.push({ role: 'assistant', content: fullReply });
+                                history.push({ role: 'assistant', content: fullReply });
                             }
                         } catch (e) {}
                     }
                 }
-
-                // Ограничиваем историю
-                if (chatHistory.length > 20) {
-                    chatHistory = chatHistory.slice(-20);
-                }
             } catch (e) {
                 botDiv.className = 'message error';
                 botDiv.textContent = 'Ошибка сети. Попробуйте ещё раз.';
-                chatHistory.pop();
+                history.pop();
             }
 
             isWaiting = false;

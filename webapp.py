@@ -71,6 +71,7 @@ async def chat(request: Request):
     messages = body.get("messages", [])
     model = body.get("model") or config.OLLAMA_MODEL
     user_id = body.get("user_id", 0)
+    logger.warning("CHAT: model=%s, user_id=%d, messages=%d", model, user_id, len(messages))
 
     if not messages:
         return {"error": "No messages"}
@@ -112,6 +113,7 @@ async def chat_stream(request: Request):
     messages = body.get("messages", [])
     model = body.get("model") or config.OLLAMA_MODEL
     user_id = body.get("user_id", 0)
+    logger.warning("STREAM: model=%s, user_id=%d, messages=%d", model, user_id, len(messages))
 
     if not messages:
         async def err():
