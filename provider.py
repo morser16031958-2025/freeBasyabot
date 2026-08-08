@@ -7,6 +7,7 @@
 Веб-инструменты (web_search, web_fetch) — нативные и бесплатные API Ollama,
 работают с тем же ключом: https://docs.ollama.com/capabilities/web-search
 """
+import asyncio
 import datetime
 import json
 import logging
@@ -16,6 +17,9 @@ import httpx
 import config
 
 logger = logging.getLogger(__name__)
+
+# Один ключ Ollama Cloud = 1 одновременный запрос. Семафор очередь.
+_ollama_semaphore = asyncio.Semaphore(1)
 
 
 class ProviderError(Exception):
@@ -105,8 +109,12 @@ async def ask(
         "content-type": "application/json",
     }
 
+    # Ollama Cloud: 1 ключ = 1 одновременный запрос. Семафор для очереди.
+    is_ollama = chat_path == "/v1/chat/completions"
+    sem = _ollama_semaphore if is_ollama else asyncio.Semaphore(1)
+
     try:
-        async with httpx.AsyncClient(timeout=config.TIMEOUT) as h:
+        async with sem, httpx.AsyncClient(timeout=config.TIMEOUT) as h:
             for step in range(config.AGENT_MAX_ITERS + 1):
                 payload = {
                     "model": model,
@@ -203,7 +211,11 @@ async def ask_stream(history: list[dict], model: str = None):
         "content-type": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=config.TIMEOUT) as h:
+    # Ollama Cloud: 1 ключ = 1 одновременный запрос. Семафор для очереди.
+    is_ollama = chat_path == "/v1/chat/completions"
+    sem = _ollama_semaphore if is_ollama else asyncio.Semaphore(1)
+
+    async with sem, httpx.AsyncClient(timeout=config.TIMEOUT) as h:
         for step in range(config.AGENT_MAX_ITERS + 1):
             # Первый шаг — non-streaming, чтобы поймать tool calls
             payload = {
