@@ -376,7 +376,7 @@
             addMessageToDOM('user', text);
             history.push({ role: 'user', content: text });
 
-            // Ограничиваем: MAX_HISTORY пар (2*MAX_HISTORY сообщений)
+            // HIGH #6: Ограничиваем: MAX_HISTORY пар (2*MAX_HISTORY сообщений)
             while (history.length > MAX_HISTORY * 2) {
                 history.shift();
                 history.shift();
@@ -384,6 +384,10 @@
 
             const botDiv = addMessageToDOM('bot', '');
             let fullReply = '';
+            let streamAborted = false;
+
+            // HIGH #7: AbortController для отмены стрима при ошибке
+            const controller = new AbortController();
 
             try {
                 const resp = await fetch('/api/chat/stream', {
@@ -392,15 +396,15 @@
                     body: JSON.stringify({
                         messages: history,
                         model: currentModel,
-                        user_id: userId,
                     }),
+                    signal: controller.signal,
                 });
 
                 const reader = resp.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
 
-                while (true) {
+                while (!streamAborted) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
@@ -415,7 +419,9 @@
                             if (data.error) {
                                 botDiv.className = 'message error';
                                 botDiv.textContent = data.error;
-                                history.pop(); // Убираем user сообщение при ошибке
+                                history.pop();
+                                streamAborted = true;
+                                controller.abort();
                                 break;
                             }
                             if (data.token) {
@@ -430,9 +436,11 @@
                     }
                 }
             } catch (e) {
-                botDiv.className = 'message error';
-                botDiv.textContent = 'Ошибка сети. Попробуйте ещё раз.';
-                history.pop();
+                if (e.name !== 'AbortError') {
+                    botDiv.className = 'message error';
+                    botDiv.textContent = 'Ошибка сети. Попробуйте ещё раз.';
+                    history.pop();
+                }
             }
 
             isWaiting = false;

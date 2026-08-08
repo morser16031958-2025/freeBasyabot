@@ -6,11 +6,11 @@ FastAPI-сервер для Telegram Mini App: API чата + раздача ф�
 import json
 import logging
 import time
+from collections import defaultdict
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 
 import config
 import provider
@@ -19,20 +19,37 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Free Bot WebApp")
 
-# CORS: Telegram Mini App отправляет запросы из WebView
+# CRITICAL #2: Ограничиваем CORS только WEBAPP_URL + Telegram домены
+_allowed_origins = [config.WEBAPP_URL] if config.WEBAPP_URL else []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type"],
 )
 
-# Rate limiting (тот же механизм что в bot.py)
+# HIGH #5: Rate limiting с автоочисткой
 _rate_limits: dict[int, list[float]] = {}
+_last_cleanup = time.monotonic()
+_CLEANUP_INTERVAL = 300.0  # 5 минут
+
+
+def _cleanup_rate_limits():
+    """Удаляем записи старше 2 минут каждые 5 минут."""
+    global _last_cleanup
+    now = time.monotonic()
+    if now - _last_cleanup < _CLEANUP_INTERVAL:
+        return
+    _last_cleanup = now
+    window = 120.0
+    empty_keys = [k for k, v in _rate_limits.items() if not v or now - v[-1] > window]
+    for k in empty_keys:
+        del _rate_limits[k]
 
 
 def _check_rate_limit(user_id: int) -> str | None:
+    _cleanup_rate_limits()
     if config.RATE_LIMIT_PER_MINUTE <= 0:
         return None
     now = time.monotonic()
@@ -49,6 +66,23 @@ def _check_rate_limit(user_id: int) -> str | None:
     return None
 
 
+def _get_client_ip(request: Request) -> int:
+    """CRITICAL #1: Используем IP клиента вместо подделываемого user_id."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "0.0.0.0"
+    return hash(ip) & 0xFFFFFFFF
+
+
+def _validate_model(model: str) -> str | None:
+    """CRITICAL #3: Проверяем модель по белому списку."""
+    if model in config.MODELS:
+        return None
+    return f"Модель '{model}' не доступна. Доступные: {', '.join(config.MODELS)}"
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Отдаём фронтенд."""
@@ -61,7 +95,7 @@ async def chat(request: Request):
     """
     Принимает сообщение от Mini App, отправляет модели, возвращает ответ.
 
-    Body: {"messages": [...], "model": "optional", "user_id": 123}
+    Body: {"messages": [...], "model": "optional"}
     """
     try:
         body = await request.json()
@@ -70,14 +104,20 @@ async def chat(request: Request):
 
     messages = body.get("messages", [])
     model = body.get("model") or config.OLLAMA_MODEL
-    user_id = body.get("user_id", 0)
-    logger.warning("CHAT: model=%s, user_id=%d, messages=%d", model, user_id, len(messages))
+    client_id = _get_client_ip(request)
+
+    # CRITICAL #3: Валидация модели
+    model_error = _validate_model(model)
+    if model_error:
+        return {"error": model_error}
+
+    logger.warning("CHAT: model=%s, client=%d, messages=%d", model, client_id, len(messages))
 
     if not messages:
         return {"error": "No messages"}
 
-    # Rate limiting
-    rate_error = _check_rate_limit(user_id)
+    # CRITICAL #1: Rate limiting по IP
+    rate_error = _check_rate_limit(client_id)
     if rate_error:
         return {"error": rate_error}
 
@@ -100,7 +140,7 @@ async def chat_stream(request: Request):
     """
     Стриминговый чат: SSE с токенами по мере генерации.
 
-    Body: {"messages": [...], "model": "optional", "user_id": 123}
+    Body: {"messages": [...], "model": "optional"}
     Events: data: {"token": "..."} | data: {"done": true} | data: {"error": "..."}
     """
     try:
@@ -112,16 +152,24 @@ async def chat_stream(request: Request):
 
     messages = body.get("messages", [])
     model = body.get("model") or config.OLLAMA_MODEL
-    user_id = body.get("user_id", 0)
-    logger.warning("STREAM: model=%s, user_id=%d, messages=%d", model, user_id, len(messages))
+    client_id = _get_client_ip(request)
+
+    # CRITICAL #3: Валидация модели
+    model_error = _validate_model(model)
+    if model_error:
+        async def err():
+            yield f'data: {json.dumps({"error": model_error})}\n\n'
+        return StreamingResponse(err(), media_type="text/event-stream")
+
+    logger.warning("STREAM: model=%s, client=%d, messages=%d", model, client_id, len(messages))
 
     if not messages:
         async def err():
             yield f'data: {json.dumps({"error": "No messages"})}\n\n'
         return StreamingResponse(err(), media_type="text/event-stream")
 
-    # Rate limiting
-    rate_error = _check_rate_limit(user_id)
+    # CRITICAL #1: Rate limiting по IP
+    rate_error = _check_rate_limit(client_id)
     if rate_error:
         async def err():
             yield f'data: {json.dumps({"error": rate_error})}\n\n'
@@ -133,16 +181,6 @@ async def chat_stream(request: Request):
 
     async def generate():
         try:
-            async def on_queue():
-                yield f"data: {json.dumps({'token': '⏳ Жду очереди. Для работы без очереди перейди на платную версию\\n'})}\n\n"
-
-            # Проверяем семафор заранее для показа очереди
-            from provider import _ollama_semaphore, _route
-            _, _, chat_path = _route(model)
-            is_ollama = chat_path == "/v1/chat/completions"
-            if is_ollama and _ollama_semaphore.locked():
-                yield f"data: {json.dumps({'token': '⏳ Жду очереди. Для работы без очереди перейди на платную версию\\n'})}\n\n"
-
             async for chunk in provider.ask_stream(messages, model=model):
                 yield f"data: {json.dumps({'token': chunk})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"

@@ -115,11 +115,15 @@ async def ask(
     is_ollama = chat_path == "/v1/chat/completions"
     sem = _ollama_semaphore if is_ollama else asyncio.Semaphore(1)
 
-    # Проверяем, занят ли семафор (для показа "в очереди")
-    if is_ollama and sem.locked() and on_queue:
-        await on_queue()
+    # HIGH #4: Показываем "в очереди" после захвата семафора если ждали
+    _had_to_wait = False
 
     try:
+        # Пробуем захватить сразу, если не удалось — ждём и показываем очередь
+        if is_ollama and sem.locked():
+            _had_to_wait = True
+            if on_queue:
+                await on_queue()
         async with sem, httpx.AsyncClient(timeout=config.TIMEOUT) as h:
             for step in range(config.AGENT_MAX_ITERS + 1):
                 payload = {
@@ -222,9 +226,10 @@ async def ask_stream(history: list[dict], model: str = None, on_queue=None):
     is_ollama = chat_path == "/v1/chat/completions"
     sem = _ollama_semaphore if is_ollama else asyncio.Semaphore(1)
 
-    # Проверяем, занят ли семафор (для показа "в очереди")
-    if is_ollama and sem.locked() and on_queue:
-        await on_queue()
+    # HIGH #4: Показываем "в очереди" после захвата семафора если ждали
+    if is_ollama and sem.locked():
+        if on_queue:
+            await on_queue()
 
     async with sem, httpx.AsyncClient(timeout=config.TIMEOUT) as h:
         for step in range(config.AGENT_MAX_ITERS + 1):

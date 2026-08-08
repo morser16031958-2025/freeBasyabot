@@ -29,10 +29,26 @@ logger = logging.getLogger(__name__)
 
 # Rate limiting: user_id -> список времененных меток запросов (секунды monotonic)
 _rate_limits: dict[int, list[float]] = {}
+_last_cleanup = time.monotonic()
+_CLEANUP_INTERVAL = 300.0  # 5 минут
+
+
+def _cleanup_rate_limits():
+    """HIGH #5: Удаляем записи старше 2 минут каждые 5 минут."""
+    global _last_cleanup
+    now = time.monotonic()
+    if now - _last_cleanup < _CLEANUP_INTERVAL:
+        return
+    _last_cleanup = now
+    window = 120.0
+    empty_keys = [k for k, v in _rate_limits.items() if not v or now - v[-1] > window]
+    for k in empty_keys:
+        del _rate_limits[k]
 
 
 def _check_rate_limit(user_id: int) -> str | None:
     """Проверяет лимит запросов. Возвращает None если OK, иначе текст ошибки."""
+    _cleanup_rate_limits()
     if config.RATE_LIMIT_PER_MINUTE <= 0:
         return None
     now = time.monotonic()
