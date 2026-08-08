@@ -197,3 +197,36 @@ On-demand генерация ключей Ollama Cloud не реализуема
 
 ---
 
+## 2026-08-07 — Исправление安全感 проблем (CRITICAL + HIGH)
+
+Аудит безопасности выявил 20 проблем. Исправлены все CRITICAL и HIGH.
+
+### CRITICAL исправления
+
+| # | Проблема | Решение |
+|---|---|---|
+| 1 | `user_id` подделывается клиентом, обход rate limit | Rate limiting теперь по IP клиента (`x-forwarded-for` или `request.client.host`) |
+| 2 | CORS `allow_origins=["*"]` с credentials | Ограничен только `WEBAPP_URL` |
+| 3 | Произвольное имя модели от клиента | Белый список `config.MODELS` перед отправкой в провайдер |
+
+### HIGH исправления
+
+| # | Проблема | Решение |
+|---|---|---|
+| 4 | TOCTOU race на `sem.locked()` | Проверка перед захватом + документирование |
+| 5 | `_rate_limits` растёт бесконечно | Автоочистка каждые 5 минут (удаление записей >2 мин) |
+| 6 | `chatHistories` растёт по моделям | Лимит `MAX_HISTORY` пар на модель |
+| 7 | `break` не останавливает SSE стрим | `AbortController` отменяет fetch при ошибке |
+
+### Изменения в файлах
+
+- `webapp.py` — IP-based rate limit, CORS whitelist, модель whitelist, удалён мёртвый код `on_queue`
+- `provider.py` — исправлен TOCTOU на семафоре
+- `bot.py` — автоочистка `_rate_limits`
+- `webapp/index.html` — `AbortController` для стрима, удалён `user_id` из запроса
+
+### Коммиты
+- `ab07e5b` — fix: resolve CRITICAL and HIGH security issues
+
+---
+
