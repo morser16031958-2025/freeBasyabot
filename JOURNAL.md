@@ -148,3 +148,52 @@ On-demand генерация ключей Ollama Cloud не реализуема
 
 ---
 
+## 2026-08-07 — Миграция на новый VPS + Mini App + семафор
+
+### Миграция на Vultr VPS
+- Новый VPS: `45.32.154.154` (Vultr, Ubuntu 26.04 LTS)
+- Домен: `basyabot.duckdns.org` → `45.32.154.154`
+- Поддомен для Mini App: `app.basyabot.duckdns.org` → `45.32.154.154`
+- Docker 29.1.3 + Docker Compose 2.40.3
+- SSH-ключ `claude-proxy-deploy` + deploy key для GitHub
+- UFW: порты 22, 80, 443
+- Сертификат Let: Encrypt автоматически получен для обоих доменов
+
+### Mini App (Telegram WebApp)
+- `WEBAPP_URL=https://app.basyabot.duckdns.org` добавлен в `.env`
+- Caddy reverse proxy: `app.basyabot.duckdns.org` → `free-bot:8080`
+- Кнопка "💬 Чат в приложении" появляется в меню бота
+
+### История по моделям (per-model context)
+- `chatHistory` → `chatHistories` (словарь с ключами по моделям)
+- Каждая модель хранит свою историю отдельно
+- Лимит: 5 пар сообщений (user+assistant) на модель
+- При переключении модели отображается только её контекст
+- `renderMessages()` — перерисовка при смене модели
+
+### Семафор для Ollama Cloud
+- `asyncio.Semaphore(1)` в `provider.py`
+- Запросы к Ollama Cloud идут по очереди (1 за раз)
+- Защита от 429 при параллельных запросах разных пользователей
+- OpenRouter не затронут (отдельные ключи)
+
+### Сообщение очереди
+- Текст: "⏳ Жду очереди. Для работы без очереди перейди на платную версию"
+- Показывается в Telegram боте и Mini App когда семафор занят
+- В Mini App — через SSE событие перед ответом модели
+
+### Замена моделей OpenRouter
+- `poolside/laguna-s-2.1:free` → `nvidia/nemotron-3-super-120b-a12b:free` → `google/gemma-4-31b-it:free`
+- Причина: free модели на OpenRouter неправильно идентифицируют себя
+
+### Логирование
+- `logger.warning` в webapp.py для chat/stream endpoints
+- `uvicorn log_level` изменён с `warning` на `info`
+
+### Коммиты
+- `4156d7a` — per-model chat history with 5-message limit
+- `11d7e25` — semaphore for Ollama Cloud concurrent request limit
+- `8d03bca` — queue waiting message for users
+
+---
+
